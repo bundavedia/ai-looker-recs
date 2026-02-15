@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Connector Looker Studio</title>
+    <!-- Load Tailwind & Lucide Icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Looker Studio Component Library -->
+    <script src="https://bundle.run/@google/dscc@0.3.17"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: transparent; margin: 0; overflow: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="flex items-center justify-center h-screen text-slate-400 text-sm animate-pulse">
+            Menghubungkan ke Looker Studio...
+        </div>
+    </div>
+
+    <script>
+        // API Key akan diisi otomatis oleh environment
+        const apiKey = ""; 
+
+        /**
+         * Fungsi untuk memanggil Gemini API dengan retry logic (exponential backoff)
+         */
+        async function getAIRecommendation(row) {
+            const prompt = `Sebagai pakar pendidikan, berikan saran konkret maksimal 40 kata untuk Guru: ${row.nama}. 
+                Skor terendah: ${row.skor} pada aspek ${row.aspek}. 
+                Apa satu langkah praktis yang harus dilakukan?`;
+
+            const callApi = async () => {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        systemInstruction: { parts: [{ text: "Berikan jawaban dalam Bahasa Indonesia yang profesional, padat, dan solutif." }] }
+                    })
+                });
+                
+                if (!response.ok) throw new Error('API Error');
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text;
+            };
+
+            // Retry logic
+            for (let i = 0; i < 5; i++) {
+                try {
+                    const result = await callApi();
+                    if (result) return result;
+                } catch (e) {
+                    if (i === 4) return "Gagal mendapatkan saran AI.";
+                    await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+                }
+            }
+            return "Rekomendasi tidak tersedia.";
+        }
+
+        /**
+         * Fungsi Render Utama (Callback dari Looker Studio)
+         */
+        function drawViz(data) {
+            const container = document.getElementById('app');
+            
+            // Validasi keberadaan data
+            if (!data || !data.tables || !data.tables.DEFAULT || data.tables.DEFAULT.length === 0) {
+                container.innerHTML = `
+                    <div class="flex items-center justify-center h-screen text-slate-400 text-xs italic p-6 text-center">
+                        <div class="space-y-3">
+                            <i data-lucide="info" class="w-8 h-8 mx-auto opacity-30"></i>
+                            <p>Tarik dimensi 'Nama Guru', 'Aspek Terlemah' dan metrik 'Skor' ke panel data.</p>
+                        </div>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            const rows = data.tables.DEFAULT;
+            
+            // Render Structure
+            container.innerHTML = `
+                <div class="p-2 h-screen flex flex-col">
+                    <div class="bg-indigo-700 text-white p-3 rounded-t-xl flex justify-between items-center shadow-lg">
+                        <h2 class="text-xs font-bold flex items-center gap-2">
+                            <i data-lucide="cpu" class="w-4 h-4 text-indigo-200"></i> AI ADVISOR GURU
+                        </h2>
+                        <span class="text-[9px] bg-indigo-800 px-2 py-1 rounded tracking-widest uppercase">${rows.length} Data</span>
+                    </div>
+                    
+                    <div class="flex-1 overflow-y-auto bg-white border border-slate-200 rounded-b-xl custom-scroll p-3 space-y-4 shadow-inner">
+                        ${rows.map((row, index) => {
+                            const nama = row.dimID ? row.dimID[0] : 'Guru';
+                            const aspek = row.dimID ? row.dimID[1] : 'Umum';
+                            const skor = row.metricID ? row.metricID[0] : 0;
+                            
+                            return `
+                                <div class="bg-slate-50 border border-slate-100 p-3 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div>
+                                            <h3 class="text-xs font-bold text-slate-800">${nama}</h3>
+                                            <p class="text-[10px] text-indigo-600 font-medium">${aspek}</p>
+                                        </div>
+                                        <div class="text-right">
+                                            <span class="text-[10px] font-black ${skor < 2.5 ? 'text-red-600' : 'text-emerald-600'} bg-white border px-2 py-0.5 rounded shadow-sm">
+                                                ${skor.toFixed(2)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div id="rec-${index}" class="text-[10px] text-slate-500 leading-relaxed border-t border-slate-200 pt-2 mt-2 italic animate-pulse">
+                                        AI sedang menganalisis...
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+
+            lucide.createIcons();
+
+            // Memproses setiap baris untuk mendapatkan rekomendasi AI
+            rows.forEach(async (row, index) => {
+                const recElement = document.getElementById(`rec-${index}`);
+                if (!recElement) return;
+
+                const rowData = {
+                    nama: row.dimID ? row.dimID[0] : 'Guru',
+                    aspek: row.dimID ? row.dimID[1] : 'Kompetensi',
+                    skor: row.metricID ? row.metricID[0] : 0
+                };
+                
+                const recommendation = await getAIRecommendation(rowData);
+                recElement.innerText = recommendation;
+                recElement.classList.remove('italic', 'text-slate-500', 'animate-pulse');
+                recElement.classList.add('text-slate-700', 'not-italic');
+            });
+        }
+
+        /**
+         * Inisialisasi Aman dengan Pengecekan Library DSCC
+         */
+        const initializeApp = () => {
+            if (window.dscc && typeof window.dscc.subscribeToData === 'function') {
+                window.dscc.subscribeToData(drawViz, { transform: window.dscc.tableTransform });
+            } else {
+                // Polling jika library belum siap
+                setTimeout(initializeApp, 100);
+            }
+        };
+
+        window.addEventListener('load', initializeApp);
+    </script>
+</body>
+</html>
