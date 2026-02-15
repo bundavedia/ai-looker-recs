@@ -1,0 +1,13 @@
+{
+  "name": "AI Teacher Recs",
+  "description": "Rekomendasi otomatis berbasis Gemini",
+  "resource": { "js": "ai_looker_connector.html" }
+}
+3.  **Di Looker Studio:**
+* Gunakan ikon **Komponen Komunitas** (4 kotak).
+* Pilih **Buat Visualisasi Anda Sendiri**.
+* Masukkan alamat URL folder tempat Anda menyimpan file tersebut.
+* **Penting:** Di bagian **Data**, masukkan:
+    * Dimension 1: `Nama Guru`
+    * Dimension 2: `Aspek Terlemah`
+    * Metric 1: `Nilai Skor Terendah`
